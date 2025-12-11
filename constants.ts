@@ -1,5 +1,5 @@
 
-import { WorkflowDefinition, Foup, FoupState, MachineState, DiagnosticLog, MetricPoint, HistoryEvent, EptState, EptTask, Machine } from './types';
+import { WorkflowDefinition, Foup, FoupState, MachineState, DiagnosticLog, MetricPoint, HistoryEvent, EptState, EptTask, Machine, WorkflowExecutionTask } from './types';
 
 // Mock Machines
 export const MOCK_MACHINES: Machine[] = [
@@ -167,4 +167,13 @@ export const MOCK_EPT_TASKS: EptTask[] = [
 
   // Machine 2 Tasks (Just one example)
   { id: 't99', machineId: 'm2', moduleId: 'PM_Etch_1', waferId: 'WE-501', recipe: 'Deep_Trench', state: EptState.Busy, startTime: 0, duration: 100 }
+];
+
+export const MOCK_WORKFLOW_TASKS: WorkflowExecutionTask[] = [
+    { id: 'wt1', machineId: 'm1', stepName: 'Carrier Arrived', status: 'Completed', startTime: 0, duration: 2 },
+    { id: 'wt2', machineId: 'm1', stepName: 'Read RFID', status: 'Completed', startTime: 2, duration: 5 },
+    { id: 'wt3', machineId: 'm1', stepName: 'SlotMap Check', status: 'Completed', startTime: 7, duration: 3 },
+    { id: 'wt4', machineId: 'm1', stepName: 'Load FOUP', status: 'Completed', startTime: 10, duration: 15 },
+    { id: 'wt5', machineId: 'm1', stepName: 'Process Wafers', status: 'Running', startTime: 25, duration: 60 },
+    { id: 'wt6', machineId: 'm1', stepName: 'Unload', status: 'Pending', startTime: 85, duration: 20 },
 ];

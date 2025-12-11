@@ -124,3 +124,12 @@ export interface EptTask {
   startTime: number; // relative seconds from start of view window
   duration: number; // seconds
 }
+
+export interface WorkflowExecutionTask {
+  id: string;
+  machineId: string; // Linked machine
+  stepName: string;
+  status: 'Pending' | 'Running' | 'Completed' | 'Failed';
+  startTime: number; // relative seconds
+  duration: number; // seconds
+}

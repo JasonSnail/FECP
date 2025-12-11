@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState } from 'react';
-import { MOCK_FOUPS, MOCK_HISTORY_EVENTS, MOCK_WORKFLOW, MOCK_EPT_TASKS } from '../constants';
+import { MOCK_FOUPS, MOCK_HISTORY_EVENTS, MOCK_WORKFLOW, MOCK_EPT_TASKS, MOCK_WORKFLOW_TASKS } from '../constants';
 import { Foup, MachineState, Wafer, HistoryEvent, FoupState, EptState, Machine } from '../types';
-import { IconCpu, IconAlertTriangle, IconHistory, IconCheckCircle, IconGitBranch, IconBarChart } from './Icons';
+import { IconCpu, IconAlertTriangle, IconHistory, IconCheckCircle, IconGitBranch, IconBarChart, IconActivity } from './Icons';
 
 const STATE_NODE_MAPPING: Record<string, string> = {
   [FoupState.Arrived]: '1',
@@ -24,6 +24,7 @@ const RuntimeViewer: React.FC<RuntimeViewerProps> = ({ selectedMachine }) => {
   // Filter data for the selected machine
   const machineFoups = MOCK_FOUPS.filter(f => f.machineId === selectedMachine.id);
   const machineEptTasks = MOCK_EPT_TASKS.filter(t => t.machineId === selectedMachine.id);
+  const machineWorkflowTasks = MOCK_WORKFLOW_TASKS.filter(t => t.machineId === selectedMachine.id);
   
   // Default to first active foup or null
   const [selectedFoup, setSelectedFoup] = useState<Foup | null>(null);
@@ -302,6 +303,62 @@ const RuntimeViewer: React.FC<RuntimeViewerProps> = ({ selectedMachine }) => {
                 )}
             </div>
         </div>
+      </div>
+
+      {/* Program Workflow Execution Gantt Panel */}
+      <div className="col-span-12 bg-slate-800 rounded-lg border border-slate-700 p-4">
+        <div className="flex items-center space-x-2 mb-4">
+            <IconActivity className="text-cyan-400 w-5 h-5" />
+            <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">
+                Program Workflow Execution Gantt
+            </h3>
+        </div>
+        
+        {machineWorkflowTasks.length === 0 ? (
+            <div className="p-10 text-center text-slate-500 bg-slate-900/50 rounded border border-slate-700 border-dashed">
+                No workflow execution data available.
+            </div>
+        ) : (
+            <div className="relative border-t border-slate-700 bg-slate-900/50 rounded overflow-hidden p-4">
+                <div className="space-y-3">
+                    {machineWorkflowTasks.map((task) => (
+                        <div key={task.id} className="relative h-8 flex items-center">
+                            {/* Label */}
+                            <div className="absolute left-0 w-32 text-xs font-mono text-slate-400 truncate text-right pr-4">
+                                {task.stepName}
+                            </div>
+                            
+                            {/* Bar Container */}
+                            <div className="ml-32 flex-1 relative h-full bg-slate-800/50 rounded overflow-hidden">
+                                {/* Bar */}
+                                <div 
+                                    className={`absolute top-1 bottom-1 rounded border shadow-sm transition-all flex items-center px-2
+                                        ${task.status === 'Running' ? 'bg-cyan-600 border-cyan-500 animate-pulse' : 
+                                          task.status === 'Completed' ? 'bg-slate-600 border-slate-500' : 
+                                          'bg-slate-700 border-slate-600'}
+                                    `}
+                                    style={{ 
+                                        left: `${(task.startTime / 100) * 100}%`, 
+                                        width: `${(task.duration / 100) * 100}%` 
+                                    }}
+                                >
+                                    {task.status === 'Running' && (
+                                        <span className="text-[10px] text-white font-bold tracking-wider">RUNNING</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                 <div className="ml-32 mt-2 flex justify-between text-[10px] text-slate-500 font-mono border-t border-slate-700 pt-1">
+                    <span>T+0s</span>
+                    <span>T+25s</span>
+                    <span>T+50s</span>
+                    <span>T+75s</span>
+                    <span>T+100s</span>
+                </div>
+            </div>
+        )}
       </div>
 
       {/* SEMI E116 EPT Visualization Panel */}

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { WorkflowDefinition, WorkflowNode, WorkflowEdge } from '../types';
 import { MOCK_WORKFLOW, MOCK_MATERIAL_FSM } from '../constants';
@@ -11,11 +12,13 @@ const WorkflowEditor: React.FC = () => {
   const [nodes, setNodes] = useState<WorkflowNode[]>(MOCK_WORKFLOW.nodes);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   // Connection State
   const [connectingNodeId, setConnectingNodeId] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   // Load correct data when view changes
   useEffect(() => {
@@ -53,6 +56,16 @@ const WorkflowEditor: React.FC = () => {
     setSelectedNode(null);
     setSelectedEdge(null);
     setConnectingNodeId(null);
+  };
+
+  const handleSaveRequest = () => {
+      setShowSaveDialog(true);
+  };
+
+  const handleConfirmSave = () => {
+      console.log(`Saving workflow ${activeWorkflow.id}...`);
+      // Here you would implement the actual API call to save the workflow
+      setShowSaveDialog(false);
   };
 
   const handleAutoLayout = () => {
@@ -116,6 +129,71 @@ const WorkflowEditor: React.FC = () => {
     const { h } = getNodeDimensions();
     return { x: node.x, y: node.y + h / 2 };
   };
+
+  // ---- Drag & Drop for New Nodes ----
+
+  const handleDragStart = (e: React.DragEvent, item: string) => {
+      // Map palette item to node type and label
+      let type = 'activity';
+      let label = item;
+      
+      if (viewMode === 'logic') {
+          if (item === 'Start') { type = 'start'; }
+          else if (item === 'End') { type = 'end'; }
+          else if (item === 'Decision') { type = 'decision'; label = 'Check Condition?'; }
+          else { type = 'activity'; }
+      } else {
+          if (item.includes('Initial')) { type = 'initial'; label = 'Start'; }
+          else if (item.includes('Final')) { type = 'final'; label = 'End'; }
+          else { type = 'state'; label = 'New State'; }
+      }
+
+      e.dataTransfer.setData('application/reactflow', JSON.stringify({ type, label }));
+      e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = () => {
+      setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDraggingOver(false);
+      if (!canvasRef.current) return;
+
+      const data = e.dataTransfer.getData('application/reactflow');
+      if (!data) return;
+
+      const { type, label } = JSON.parse(data);
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      const { w, h } = getNodeDimensions();
+
+      const newNode: WorkflowNode = {
+          id: `${type}-${Date.now()}`,
+          type: type as any,
+          label: label,
+          x: x - w / 2, // Center on cursor
+          y: y - h / 2,
+          status: 'pending'
+      };
+
+      const newNodes = [...nodes, newNode];
+      setNodes(newNodes);
+      setActiveWorkflow(prev => ({
+          ...prev,
+          nodes: newNodes
+      }));
+  };
+
 
   // ---- Interaction Handlers ----
 
@@ -195,30 +273,52 @@ const WorkflowEditor: React.FC = () => {
 
   // ---- Path Generators ----
 
-  const getEdgePath = (sx: number, sy: number, tx: number, ty: number) => {
+  const getEdgePath = (sx: number, sy: number, tx: number, ty: number, sourceNode?: WorkflowNode, targetNode?: WorkflowNode) => {
     const dx = tx - sx;
     const dy = ty - sy;
+
+    // Check for collision/obstruction by other nodes in logic mode
+    let yOffset = 0;
+    if (viewMode === 'logic' && sourceNode && targetNode) {
+        // Simple collision detection: if there is a node directly between source and target
+        const hasObstruction = nodes.some(n => 
+            n.id !== sourceNode.id && 
+            n.id !== targetNode.id &&
+            n.x > Math.min(sx, tx) && 
+            n.x < Math.max(sx, tx) &&
+            Math.abs(n.y - sy) < 60 // Roughly same Y level
+        );
+        if (hasObstruction) {
+            yOffset = -80; // Route above
+        }
+    }
 
     if (viewMode === 'logic') {
         // Smart Routing for Logic View
         // If target is behind source (loop-back), route under/around
         if (dx < -20) {
             // Backward Edge (Loop) - "U" shape dipping down
+            
+            // Find lowest Y in the graph to route below everything
+            const maxY = Math.max(...nodes.map(n => n.y), sy, ty);
             const loopDepth = 80;
+            const routeY = maxY + loopDepth; // Route below the lowest node
+            
             const controlOut = 50;
-            // Midpoint for the dip
             const mx = (sx + tx) / 2;
-            const my = Math.max(sy, ty) + loopDepth;
             
             // Cubic Bezier with symmetric S curve for smooth return
             // Path: Start -> Curve Down/Right -> Midpoint (Bottom) -> Curve Up/Left -> End
             return `M ${sx} ${sy} 
-                    C ${sx + controlOut} ${sy}, ${sx + controlOut} ${my}, ${mx} ${my} 
+                    C ${sx + controlOut} ${sy}, ${sx + controlOut} ${routeY}, ${mx} ${routeY} 
                     S ${tx - controlOut} ${ty}, ${tx} ${ty}`;
         } else {
-            // Forward Edge
-            // Ensure handle length prevents tight kinks for close nodes
+            // Forward Edge with optional obstruction handling
             const controlOffset = Math.max(dx * 0.5, 60);
+            if (yOffset !== 0) {
+                // Route above obstruction
+                return `M ${sx} ${sy} Q ${sx + controlOffset} ${sy + yOffset} ${(sx+tx)/2} ${sy + yOffset} T ${tx} ${ty}`;
+            }
             return `M ${sx} ${sy} C ${sx + controlOffset} ${sy}, ${tx - controlOffset} ${ty}, ${tx} ${ty}`;
         }
     } else {
@@ -233,7 +333,7 @@ const WorkflowEditor: React.FC = () => {
   const selectedEdgeObj = activeWorkflow.edges.find(e => e.id === selectedEdge);
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 border border-slate-800 rounded-lg overflow-hidden shadow-2xl">
+    <div className="flex flex-col h-full bg-slate-950 border border-slate-800 rounded-lg overflow-hidden shadow-2xl relative">
       {/* Main Toolbar */}
       <div className="h-14 bg-slate-900 border-b border-slate-800 flex items-center px-4 justify-between z-20 shadow-sm">
         
@@ -280,7 +380,10 @@ const WorkflowEditor: React.FC = () => {
                 <IconLayout className="w-3 h-3" />
                 <span>Layout</span>
             </button>
-            <button className={`text-xs px-4 py-1.5 rounded transition text-white shadow-lg font-medium border border-transparent ${viewMode === 'logic' ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30' : 'bg-purple-600 hover:bg-purple-500 shadow-purple-900/30'}`}>
+            <button 
+                onClick={handleSaveRequest}
+                className={`text-xs px-4 py-1.5 rounded transition text-white shadow-lg font-medium border border-transparent ${viewMode === 'logic' ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30' : 'bg-purple-600 hover:bg-purple-500 shadow-purple-900/30'}`}
+            >
                 Save
             </button>
         </div>
@@ -296,7 +399,12 @@ const WorkflowEditor: React.FC = () => {
             {viewMode === 'logic' ? (
                 // Logic Palette
                 ['Start', 'Process', 'Verify', 'Load', 'Unload', 'Decision', 'End'].map(item => (
-                <div key={item} className="group bg-slate-800 p-3 rounded-md text-xs text-slate-300 cursor-grab hover:bg-slate-750 hover:text-white border border-slate-700 hover:border-blue-500/50 hover:shadow-md transition-all flex items-center">
+                <div 
+                    key={item} 
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, item)}
+                    className="group bg-slate-800 p-3 rounded-md text-xs text-slate-300 cursor-grab hover:bg-slate-750 hover:text-white border border-slate-700 hover:border-blue-500/50 hover:shadow-md transition-all flex items-center"
+                >
                     <span className={`w-2 h-2 rounded-sm mr-3 ${item === 'Decision' ? 'bg-amber-500' : item === 'Start' || item === 'End' ? 'bg-slate-500' : 'bg-blue-500'}`}></span>
                     {item}
                 </div>
@@ -304,7 +412,12 @@ const WorkflowEditor: React.FC = () => {
             ) : (
                 // FSM Palette
                 ['State', 'Initial State', 'Final State', 'Super State'].map(item => (
-                <div key={item} className="group bg-slate-800 p-3 rounded-full text-xs text-slate-300 cursor-grab hover:bg-slate-750 hover:text-white border border-slate-700 hover:border-purple-500/50 hover:shadow-md transition-all flex items-center justify-center">
+                <div 
+                    key={item} 
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, item)}
+                    className="group bg-slate-800 p-3 rounded-full text-xs text-slate-300 cursor-grab hover:bg-slate-750 hover:text-white border border-slate-700 hover:border-purple-500/50 hover:shadow-md transition-all flex items-center justify-center"
+                >
                      <span className={`w-2 h-2 rounded-full mr-2 ${item.includes('Initial') || item.includes('Final') ? 'bg-pink-500' : 'bg-purple-500'}`}></span>
                     {item}
                 </div>
@@ -316,15 +429,18 @@ const WorkflowEditor: React.FC = () => {
         {/* Canvas */}
         <div 
             ref={canvasRef}
-            className="flex-1 relative bg-slate-950 overflow-hidden cursor-default group"
+            className={`flex-1 relative bg-[#0B1120] overflow-hidden cursor-default group transition-colors duration-200 ${isDraggingOver ? 'bg-[#0f172a] shadow-[inset_0_0_20px_rgba(59,130,246,0.1)]' : ''}`}
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
             onClick={handleCanvasClick}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
         >
             {/* Harmonious Grid Pattern - Lighter dots on dark bg */}
-            <div className="absolute inset-0 pointer-events-none opacity-[0.15]" 
+            <div className="absolute inset-0 pointer-events-none opacity-[0.08]" 
                 style={{ 
-                    backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', 
+                    backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', 
                     backgroundSize: '24px 24px' 
                 }}>
             </div>
@@ -353,7 +469,7 @@ const WorkflowEditor: React.FC = () => {
 
                     const start = getSourcePoint(source);
                     const end = getTargetPoint(target);
-                    const pathD = getEdgePath(start.x, start.y, end.x, end.y);
+                    const pathD = getEdgePath(start.x, start.y, end.x, end.y, source, target);
                     const isSelected = selectedEdge === edge.id;
 
                     const strokeColor = isSelected 
@@ -645,6 +761,22 @@ const WorkflowEditor: React.FC = () => {
                                         className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 outline-none transition-all" 
                                     />
                                 </div>
+                                 {/* Edge Routing Style */}
+                                 <div>
+                                    <label className="block text-[10px] uppercase text-slate-400 mb-1.5 font-semibold">Routing Style</label>
+                                    <select 
+                                        value={selectedEdgeObj.style || 'bezier'}
+                                        onChange={(e) => setActiveWorkflow(prev => ({
+                                            ...prev,
+                                            edges: prev.edges.map(ed => ed.id === selectedEdgeObj.id ? { ...ed, style: e.target.value as any } : ed)
+                                        }))}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-300 focus:border-blue-500 outline-none"
+                                    >
+                                        <option value="bezier">Bezier Curve (Standard)</option>
+                                        <option value="step">Stepped / Manhattan</option>
+                                        <option value="straight">Straight Line</option>
+                                    </select>
+                                </div>
                             </div>
                             
                             <div className="pt-6 border-t border-slate-800/50">
@@ -662,6 +794,38 @@ const WorkflowEditor: React.FC = () => {
             </div>
         )}
       </div>
+
+      {/* Save Confirmation Dialog */}
+      {showSaveDialog && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-6 w-96 max-w-[90%] transform scale-100 transition-all">
+                <h3 className="text-lg font-semibold text-white mb-2 flex items-center">
+                    <span>Save Changes?</span>
+                </h3>
+                <p className="text-sm text-slate-400 mb-6 leading-relaxed">
+                    Are you sure you want to save the current configuration to 
+                    <span className="font-mono text-slate-300 mx-1 bg-slate-800 px-1 rounded">{activeWorkflow.name}</span>? 
+                    This will overwrite the existing version.
+                </p>
+                <div className="flex justify-end space-x-3">
+                    <button 
+                        onClick={() => setShowSaveDialog(false)}
+                        className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 rounded transition border border-slate-700 hover:border-slate-600"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleConfirmSave}
+                        className={`px-4 py-2 text-xs font-medium text-white rounded shadow-lg transition transform hover:scale-105 ${
+                            viewMode === 'logic' ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30' : 'bg-purple-600 hover:bg-purple-500 shadow-purple-900/30'
+                        }`}
+                    >
+                        Confirm Save
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };
